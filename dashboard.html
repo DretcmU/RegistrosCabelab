@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Sistema CABELAB</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="css/style.css">
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+</head>
+
+<body>
+    <h1>📋 Sistema CABELAB</h1>
+
+    <div class="top-bar">
+    <input id="search" placeholder="Buscar cliente, modelo, marca...">
+    <button onclick="abrirFormulario()">➕ Agregar Registro</button>
+    <button onclick="exportarExcel()">📥 Exportar Excel</button>
+    <button onclick="cerrarSesion()" class="btn-salir">🚪 Salir</button>
+
+
+    </div>
+
+    <table id="tabla">
+    <thead>
+        <tr>
+        <th>ID</th>
+        <th>Cliente</th>
+        <th>RUC</th>
+        <th>Correo</th>
+        <th>Marcas</th>
+        <th>Modelos</th>
+        <th>Fecha</th>
+        <th>Editar</th>
+        <th>PDF</th>
+        <th>Enviar Correo</th>
+        </tr>
+    </thead>
+    <tbody></tbody>
+    </table>
+
+    <!-- Modal formulario -->
+    <div id="modal">
+    <div id="modalBox">
+        
+        <div id="modalHeader">
+        📋 Nuevo Registro Cliente
+        <button onclick="cerrarFormulario()">✖</button>
+        </div>
+
+        <div id="modalBody">
+
+        <input id="cliente" placeholder="Cliente">
+        <input id="telefono" placeholder="Teléfono">
+        <input id="correo" placeholder="Correo">
+        <input id="ruc" placeholder="RUC">
+        <input id="direccion" placeholder="Dirección">
+        <input id="responsable" placeholder="Responsable">
+        <input id="guia" placeholder="Guía Remisión">
+
+        <h3>Equipos</h3>
+        <table id="tablaEquipos">
+            <thead>
+            <tr>
+                <th>Item</th>
+                <th>Cant</th>
+                <th>Marca</th>
+                <th>Modelo</th>
+                <th>Descripción</th>
+                <th>Serie</th>
+                <th>Servicio</th>
+                <th>Falla</th>
+            </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+
+        <button onclick="agregarEquipo()">➕ Equipo</button>
+        <button onclick="quitarEquipo()">➖ Equipo</button>
+
+        <h3>Accesorios</h3>
+        <table id="tablaAcc">
+            <thead>
+            <tr>
+                <th>Item</th>
+                <th>Accesorio</th>
+                <th>Observación</th>
+            </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+
+        <h3>Firmas</h3>
+
+        <b>Técnico</b><br>
+        <canvas id="firmaTec" width="300" height="120"></canvas>
+        <button onclick="limpiar('firmaTec')">Limpiar</button><br>
+
+        <b>Cliente</b><br>
+        <canvas id="firmaCli" width="300" height="120"></canvas>
+        <button onclick="limpiar('firmaCli')">Limpiar</button>
+
+        <br><br>
+        <button onclick="guardarCliente()">💾 Guardar</button>
+        <button onclick="cerrarFormulario()">Cerrar</button>
+
+        </div>
+    </div>
+    </div>
+
+    <div id="loadingScreen" class="loading-screen">
+    <div class="loader-box">
+        <div class="spinner"></div>
+        <p>Guardando registro, espere...</p>
+    </div>
+    </div>
+
+    <script type="module" src="js/dashboard.js"></script>
+    <script type="module" src="js/export.js"></script>
+
+</body>
+</html>
