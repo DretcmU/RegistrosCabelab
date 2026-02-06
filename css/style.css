@@ -255,3 +255,9 @@ canvas {
 .btn-salir:hover {
   background: #d62828;
 }
+
+canvas {
+  touch-action: none;
+  background: white;
+  border: 1px solid #000;
+}

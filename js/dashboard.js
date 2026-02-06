@@ -91,6 +91,8 @@ window.abrirFormulario = () => {
   box.style.transform = "translate(-50%, -50%)";
   activarFirma("firmaTec");
   activarFirma("firmaCli");
+  prepararCanvas("firmaTec");
+  prepararCanvas("firmaCli");  
 };
 
 window.cerrarFormulario = () => {
@@ -256,23 +258,40 @@ function obtenerAccesorios() {
 function activarFirma(id) {
   const canvas = document.getElementById(id);
   const ctx = canvas.getContext("2d");
+
   let dibujando = false;
 
-  canvas.onmousedown = (e) => {
+  // Suavizado profesional
+  ctx.lineWidth = 2;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+
+  function getPos(e) {
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: e.clientX - rect.left,
+      y: e.clientY - rect.top
+    };
+  }
+
+  canvas.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
     dibujando = true;
+    canvas.setPointerCapture(e.pointerId); // 🔥 CLAVE
+    const pos = getPos(e);
     ctx.beginPath();
-    ctx.moveTo(e.offsetX, e.offsetY);
-  };
+    ctx.moveTo(pos.x, pos.y);
+  });
 
-  canvas.onmouseup = () => dibujando = false;
-
-  canvas.onmousemove = (e) => {
+  canvas.addEventListener("pointermove", (e) => {
     if (!dibujando) return;
-    ctx.lineWidth = 2;
-    ctx.lineCap = "round";
-    ctx.lineTo(e.offsetX, e.offsetY);
+    const pos = getPos(e);
+    ctx.lineTo(pos.x, pos.y);
     ctx.stroke();
-  };
+  });
+
+  canvas.addEventListener("pointerup", () => dibujando = false);
+  canvas.addEventListener("pointercancel", () => dibujando = false);
 }
 
 
@@ -417,4 +436,21 @@ function cargarEquipos(equipos) {
       </tr>
     `;
   });
+}
+
+
+function prepararCanvas(id) {
+  const canvas = document.getElementById(id);
+  const ctx = canvas.getContext("2d");
+
+  const ratio = window.devicePixelRatio || 1;
+  const w = canvas.offsetWidth;
+  const h = canvas.offsetHeight;
+
+  canvas.width = w * ratio;
+  canvas.height = h * ratio;
+  canvas.style.width = w + "px";
+  canvas.style.height = h + "px";
+
+  ctx.scale(ratio, ratio);
 }
