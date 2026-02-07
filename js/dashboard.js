@@ -5,8 +5,14 @@ import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.1/fi
 import { DESCRIPCIONES, MARCAS, SERVICIOS, ocultarLoading, mostrarLoading } from "./extras.js";
 import { runTransaction } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 import { signOut } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-auth.js";
+import { query, orderBy, limit, startAfter} from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
 let editandoID = null;
+let registrosCache = []; // para el buscador
+let registrosGlobales = [];
+let ultimoDoc = null;
+let primerDoc = null;
+const LIMITE = 10;
 
 
 async function obtenerNumeroFormato() {
@@ -31,11 +37,12 @@ async function obtenerNumeroFormato() {
   return nro;
 }
 
-onAuthStateChanged(auth, (user) => {
+onAuthStateChanged(auth, async (user) => {
   if (!user) {
-    alert("No autorizado");
+    //alert("No autorizado");
     window.location.href = "index.html"; // volver a login
   } else {
+    await cargarTodosRegistros();   // 👈 cargar TODO
     console.log("Usuario logeado:", user.email);
     cargarClientes(); // cargar datos SOLO si está logeado
   }
@@ -46,40 +53,93 @@ window.cerrarSesion = async () => {
   window.location.href = "index.html"; // tu página login
 };
 
+
 async function cargarClientes() {
+  const q = query(
+    collection(db, "registros"),
+    orderBy("nro_formato", "desc"),
+    limit(LIMITE)
+  );
+
+  const snap = await getDocs(q);
+  procesarPagina(snap);
+}
+
+function procesarPagina(snap) {
+  registrosCache = [];
+
+  snap.docs.forEach(docu => {
+    registrosCache.push({ id: docu.id, ...docu.data() });
+  });
+
+  if (!snap.empty) {
+    primerDoc = snap.docs[0];
+    ultimoDoc = snap.docs[snap.docs.length - 1];
+  }
+
+  renderTabla(registrosCache);
+}
+
+
+window.nextPagina = async () => {
+  if (!ultimoDoc) return alert("No hay más registros");
+
+  const q = query(
+    collection(db, "registros"),
+    orderBy("nro_formato", "desc"),
+    startAfter(ultimoDoc),
+    limit(LIMITE)
+  );
+
+  const snap = await getDocs(q);
+  procesarPagina(snap);
+};
+
+window.prevPagina = async () => {
+  if (!primerDoc) return alert("No hay anteriores");
+
+  const q = query(
+    collection(db, "registros"),
+    orderBy("nro_formato", "asc"),
+    startAfter(primerDoc),
+    limit(LIMITE)
+  );
+
+  const snap = await getDocs(q);
+
+  const docs = snap.docs.reverse(); // invertir orden
+
+  procesarPagina({ docs, empty: docs.length == 0 });
+};
+
+function renderTabla(lista) {
   const tabla = document.querySelector("#tabla tbody");
   tabla.innerHTML = "";
 
-  const q = await getDocs(collection(db, "registros"));
-
-  q.forEach(docu => {
-    const d = docu.data();
-
-    
+  lista.forEach(d => {
     const equipos = d.equipos || [];
-    
-    if (!Array.isArray(equipos)) return;
     const marcas = equipos.map(e => e.marca).join(", ");
     const modelos = equipos.map(e => e.modelo).join(", ");
-    const fecha = new Date(d.fecha.seconds*1000).toLocaleString();
+    const fecha = d.fecha?.seconds 
+      ? new Date(d.fecha.seconds * 1000).toLocaleString()
+      : "";
 
     tabla.innerHTML += `
       <tr>
-        <td>${d.nro_formato + 1000}</td>
-        <td>${d.cliente}</td>
-        <td>${d.ruc}</td>
-        <td>${d.correo}</td>
+        <td>${1000 + d.nro_formato}</td>
+        <td>${d.cliente || ""}</td>
+        <td>${d.ruc || ""}</td>
+        <td>${d.correo || ""}</td>
         <td>${marcas}</td>
         <td>${modelos}</td>
         <td>${fecha}</td>
-        <td><button onclick="editar('${docu.id}')">✏️</button></td>
-        <td><button onclick="exportarPDF('${docu.id}')">📄</button></td>
-        <td><button>✉️</button></td>
+        <td><button onclick="editar('${d.id}')">✏️</button></td>
+        <td><button onclick="exportarPDF('${d.id}')">📄</button></td>
+        <td><button onclick="enviarPDF('${d.id}')">✉️</button></td>
       </tr>
     `;
   });
 }
-
 
 window.abrirFormulario = () => {
   document.getElementById("modal").style.display = "flex";
@@ -454,3 +514,111 @@ function prepararCanvas(id) {
 
   ctx.scale(ratio, ratio);
 }
+
+document.getElementById("search").addEventListener("input", e => {
+  const texto = e.target.value.toLowerCase();
+
+  const filtrados = registrosGlobales.filter(d => {
+    const equipos = d.equipos || [];
+    const marcas = equipos.map(e => e.marca).join(" ").toLowerCase();
+    const modelos = equipos.map(e => e.modelo).join(" ").toLowerCase();
+
+    const fechaTxt = d.fecha?.seconds
+      ? new Date(d.fecha.seconds * 1000).toLocaleString().toLowerCase()
+      : "";
+
+    return (
+      ("" + (1000 + d.nro_formato)).includes(texto) ||
+      (d.cliente || "").toLowerCase().includes(texto) ||
+      (d.correo || "").toLowerCase().includes(texto) ||
+      (d.ruc || "").toLowerCase().includes(texto) ||
+      (d.telefono || "").toLowerCase().includes(texto) ||
+      (d.guia || "").toLowerCase().includes(texto) ||
+      (d.responsable || "").toLowerCase().includes(texto) ||
+      fechaTxt.includes(texto) ||
+      marcas.includes(texto) ||
+      modelos.includes(texto)
+    );
+  });
+
+  renderTabla(filtrados.slice(0, 30)); // mostrar solo 30 resultados
+});
+
+
+async function cargarTodosRegistros() {
+  const q = await getDocs(collection(db, "registros"));
+  registrosGlobales = [];
+
+  q.forEach(docu => {
+    registrosGlobales.push({ id: docu.id, ...docu.data() });
+  });
+
+  console.log("Registros globales cargados:", registrosGlobales.length);
+}
+
+
+window.enviarPDF = async (docId) => {
+  try{
+    mostrarLoading("Enviando a PDF al correo...");
+    const docu = await getDoc(doc(db, "registros", docId));
+    const d = docu.data();
+    const fecha = new Date(d.fecha.seconds * 1000).toLocaleString();
+
+    // ===== TABLA EQUIPOS =====
+    const equipos = d.equipos || [];
+
+    // EQUIPOS TABLA HTML
+    const equiposHTML = equipos.map((e,i)=>`
+    <tr>
+    <td>${i+1}</td>
+    <td>${e.cant}</td>
+    <td style="word-break:break-word;">${e.marca}</td>
+    <td style="word-break:break-word;">${e.modelo}</td>
+    <td style="word-break:break-word;">${e.descripcion}</td>
+    <td style="word-break:break-word;">${e.serie}</td>
+    <td style="word-break:break-word;">${e.servicio}</td>
+    <td style="word-break:break-word;">${e.falla}</td>
+    </tr>
+    `).join("");
+
+    // ACCESORIOS
+    const accesoriosHTML = equipos.map((e,i)=>`
+    <tr>
+      <td>${i+1}</td>
+      <td style="word-break:break-word;">${e.accesorio || ""}</td>
+      <td style="word-break:break-word;">${e.obs || ""}</td>
+    </tr>
+    `).join("");
+
+    // FIRMAS
+    const firmaTec = d.firma_tecnico || "";
+    const firmaCli = d.firma_cliente || "";
+
+    const nro = 1000 + d.nro_formato;
+
+    const params = {
+      to_email: d.correo,
+      nro: nro,
+      fecha: fecha,
+      cliente: d.cliente,
+      ruc: d.ruc,
+      direccion: d.direccion,
+      telefono: d.telefono,
+      correo: d.correo,
+      responsable: d.responsable,
+      guia: d.guia,
+      equipos: equiposHTML,
+      accesorios: accesoriosHTML,
+      firma_tecnico: firmaTec,
+      firma_cliente: firmaCli
+    };
+
+    await emailjs.send("service_7kuljkq", "template_01npkp8", params); 
+    ocultarLoading();
+    alert("✅ Correo enviado");
+  }catch (err) {
+    ocultarLoading();
+    console.error(err);
+    alert("❌ Error al enviar PDF");
+  }
+};

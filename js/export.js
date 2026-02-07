@@ -174,14 +174,22 @@ window.exportarPDF = async (docId) => {
 
 
 window.exportarExcel = async () => {
-  try{
+  try {
     mostrarLoading("Exportando a Excel...");
+
     const querySnapshot = await getDocs(collection(db, "registros"));
     const data = [];
 
+    // Convertir docs a array para ordenar
+    const registros = [];
     querySnapshot.forEach(docu => {
-      const d = docu.data();
+      registros.push(docu.data());
+    });
 
+    // Ordenar por nro_formato
+    registros.sort((a, b) => a.nro_formato - b.nro_formato);
+
+    registros.forEach(d => {
       // Equipos en texto
       let equiposTxt = "";
       if (d.equipos) {
@@ -191,8 +199,7 @@ window.exportarExcel = async () => {
       }
 
       data.push({
-        ID: docu.id,
-        NRO: d.nro_formato,
+        NRO: 1000 + d.nro_formato, // 👈 SUMAR 1000
         Cliente: d.cliente,
         RUC: d.ruc,
         Dirección: d.direccion,
@@ -211,7 +218,8 @@ window.exportarExcel = async () => {
 
     XLSX.writeFile(wb, "CABELAB_Registros.xlsx");
     ocultarLoading();
-  } catch(err){
+
+  } catch (err) {
     ocultarLoading();
     console.error(err);
     alert("Hubo un error al exportar el Excel.");

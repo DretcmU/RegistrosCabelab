@@ -261,3 +261,23 @@ canvas {
   background: white;
   border: 1px solid #000;
 }
+
+
+.paginacion {
+  margin-top: 10px;
+  text-align: center;
+}
+
+.paginacion button {
+  padding: 8px 16px;
+  margin: 5px;
+  border-radius: 6px;
+  border: none;
+  background: #111;
+  color: white;
+  cursor: pointer;
+}
+
+.paginacion button:hover {
+  background: #444;
+}

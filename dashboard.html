@@ -10,6 +10,13 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
 
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
+    <script src="https://cdn.jsdelivr.net/npm/emailjs-com@3/dist/email.min.js"></script>
+    <script>
+        (function(){
+            emailjs.init("5Ae-gK3XGo5qIQHvJ");
+        })();
+    </script>    
 </head>
 
 <body>
@@ -41,6 +48,11 @@
     </thead>
     <tbody></tbody>
     </table>
+
+    <div class="paginacion">
+    <button onclick="prevPagina()">⬅️ Prev</button>
+    <button onclick="nextPagina()">Next ➡️</button>
+    </div>
 
     <!-- Modal formulario -->
     <div id="modal">
@@ -95,7 +107,7 @@
 
         <h3>Firmas</h3>
 
-        <b>Técnico</b><br>
+        <b>Recepción</b><br>
         <canvas id="firmaTec" width="300" height="120"></canvas>
         <button onclick="limpiar('firmaTec')">Limpiar</button><br>
 
