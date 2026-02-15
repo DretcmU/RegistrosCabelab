@@ -23,7 +23,14 @@
     <h1>📋 Sistema CABELAB</h1>
 
     <div class="top-bar">
-    <input id="search" placeholder="Buscar cliente, modelo, marca...">
+    <!--<input id="search" placeholder="Buscar cliente, modelo, marca...">-->
+    <input
+    id="search"
+    type="text"
+    placeholder="Buscar cliente, RUC, correo o 1001..."/>
+
+    <button onclick="cargarMas()">Cargar más</button>
+
     <button onclick="abrirFormulario()">➕ Agregar Registro</button>
     <button onclick="exportarExcel()">📥 Exportar Excel</button>
     <button onclick="cerrarSesion()" class="btn-salir">🚪 Salir</button>
@@ -128,6 +135,34 @@
         <div class="spinner"></div>
         <p>Guardando registro, espere...</p>
     </div>
+    </div>
+
+    <div id="modalCorreo">
+    <div id="modalCorreoBox">
+
+        <div id="modalHeader">
+        <span>Enviar PDF</span>
+        <button onclick="cerrarMenuCorreo()">X</button>
+        </div>
+
+        <div id="modalBody">
+
+        <label>Seleccione correo destino:</label>
+
+        <select id="correoSelect">
+            <option value="">Seleccione</option>
+            <option value="registro">Correo del registro</option>
+            <option value="dosendrogas@gmail.com">dosendrogas@gmail.com</option>
+            <option value="rufusbato@gmail.com">rufusbato@gmail.com</option>
+        </select>
+
+        <button onclick="confirmarEnvio()">Enviar</button>
+        <button onclick="cerrarMenuCorreo()">Cancelar</button>
+
+        </div>
+
+    </div>
+
     </div>
 
     <script type="module" src="js/dashboard.js"></script>

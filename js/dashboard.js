@@ -1,19 +1,24 @@
-import { db } from "./firebase.js";
-import { collection, addDoc, getDocs, deleteDoc, doc, getDoc, updateDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
-import { auth } from "./firebase.js";
+import { db, auth, storage, functions } from "./firebase.js";
+import { collection, addDoc, getDocs, doc, getDoc, updateDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
 import { DESCRIPCIONES, MARCAS, SERVICIOS, ocultarLoading, mostrarLoading } from "./extras.js";
 import { runTransaction } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 import { signOut } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-auth.js";
-import { query, orderBy, limit, startAfter} from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+import { query, orderBy, limit, startAfter, startAt, endAt, where} from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+import { ref, uploadBytes } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-storage.js";
+import { httpsCallable } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-functions.js";
+
+const obtenerRegistroConFirmas = httpsCallable(functions, "obtenerRegistroConFirmas");
 
 let editandoID = null;
 let registrosCache = []; // para el buscador
-let registrosGlobales = [];
 let ultimoDoc = null;
 let primerDoc = null;
-const LIMITE = 10;
-
+const LIMITE = 3;
+let docSeleccionado = null;
+let correoRegistroActual = null;
+let lastDoc = null;
+let timeout = null;
 
 async function obtenerNumeroFormato() {
   const contadorRef = doc(db, "config", "contador");
@@ -42,7 +47,7 @@ onAuthStateChanged(auth, async (user) => {
     //alert("No autorizado");
     window.location.href = "index.html"; // volver a login
   } else {
-    await cargarTodosRegistros();   // 👈 cargar TODO
+    //console.log(auth.currentUser);
     console.log("Usuario logeado:", user.email);
     cargarClientes(); // cargar datos SOLO si está logeado
   }
@@ -62,8 +67,33 @@ async function cargarClientes() {
   );
 
   const snap = await getDocs(q);
-  procesarPagina(snap);
+
+  lastDoc = snap.docs[snap.docs.length - 1];
+
+  const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+  renderTabla(data);
 }
+
+window.cargarMas = async () => {
+  if (!lastDoc) return;
+
+  const q = query(
+    collection(db, "registros"),
+    orderBy("nro_formato", "desc"),
+    startAfter(lastDoc),
+    limit(LIMITE)
+  );
+
+  const snap = await getDocs(q);
+
+  lastDoc = snap.docs[snap.docs.length - 1];
+
+  const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+  renderTabla(data, true);
+}
+
 
 function procesarPagina(snap) {
   registrosCache = [];
@@ -112,9 +142,10 @@ window.prevPagina = async () => {
   procesarPagina({ docs, empty: docs.length == 0 });
 };
 
-function renderTabla(lista) {
+function renderTabla(lista, add=null) {
   const tabla = document.querySelector("#tabla tbody");
-  tabla.innerHTML = "";
+  if(add===null)
+    tabla.innerHTML = "";
 
   lista.forEach(d => {
     const equipos = d.equipos || [];
@@ -135,13 +166,15 @@ function renderTabla(lista) {
         <td>${fecha}</td>
         <td><button onclick="editar('${d.id}')">✏️</button></td>
         <td><button onclick="exportarPDF('${d.id}')">📄</button></td>
-        <td><button onclick="enviarPDF('${d.id}')">✉️</button></td>
+        <td><button onclick="abrirMenuCorreo('${d.id}', '${d.correo}')">✉️</button></td>
       </tr>
     `;
   });
 }
 
-window.abrirFormulario = () => {
+window.abrirFormulario = (editar=null) => {
+  if(editar===null)
+    editandoID = null;
   document.getElementById("modal").style.display = "flex";
 
   // centrar ventana
@@ -171,14 +204,22 @@ window.guardarCliente = async () => {
     const telefono = document.getElementById("telefono").value;
     const guia = document.getElementById("guia").value;
 
-    let firmaTecnicoURL = await subirFirma("firmaTec");
-    let firmaClienteURL = await subirFirma("firmaCli");
+        // ===== CAMPOS LOWER =====
+    const cliente_lower = cliente.toLowerCase();
+    const correo_lower = correo.toLowerCase();
+    const responsable_lower = responsable.toLowerCase();
+    const guia_lower = guia.toLowerCase();
+
+    const tempID = Date.now(); // ID temporal para nombres
 
     const datos = {
-      cliente, ruc, direccion, correo,
-      responsable, telefono, guia,
+      cliente, ruc, direccion, correo, telefono,
+      responsable, guia,
       equipos: obtenerEquipos(),
-      fecha: new Date()
+      fecha: new Date(), cliente_lower,
+      correo_lower,
+      responsable_lower,
+      guia_lower,
     };
 
     // ================== EDITAR ==================
@@ -186,12 +227,10 @@ window.guardarCliente = async () => {
       const oldSnap = await getDoc(doc(db, "registros", editandoID));
       const old = oldSnap.data();
 
-      // Si no firmaron de nuevo, mantener firma anterior
-      if (!firmaTecnicoURL) firmaTecnicoURL = old.firma_tecnico;
-      if (!firmaClienteURL) firmaClienteURL = old.firma_cliente;
+      const nro = old.nro_formato;
 
-      datos.firma_tecnico = firmaTecnicoURL;
-      datos.firma_cliente = firmaClienteURL;
+      await subirFirma("firmaTec", nro);
+      await subirFirma("firmaCli", nro);
 
       await updateDoc(doc(db, "registros", editandoID), datos);
 
@@ -200,16 +239,18 @@ window.guardarCliente = async () => {
 
     // ================== NUEVO ==================
     else {
+      const nro = await obtenerNumeroFormato();
+
+      const firmaTecnicoURL = await subirFirma("firmaTec", nro);
+      const firmaClienteURL = await subirFirma("firmaCli", nro);
+
       if (!firmaTecnicoURL || !firmaClienteURL) {
         alert("Debe firmar técnico y cliente");
         ocultarLoading();
         return;
       }
 
-      const nro = await obtenerNumeroFormato();
       datos.nro_formato = nro;
-      datos.firma_tecnico = firmaTecnicoURL;
-      datos.firma_cliente = firmaClienteURL;
 
       await addDoc(collection(db, "registros"), datos);
       alert("✅ Registro guardado");
@@ -230,30 +271,28 @@ window.guardarCliente = async () => {
 window.agregarEquipo = () => {
   const tbody = document.querySelector("#tablaEquipos tbody");
   const tbodyAcc = document.querySelector("#tablaAcc tbody");
-  const n = tbody.children.length + 1;
 
-  tbody.innerHTML += `
-    <tr>
-      <td>${n}</td>
-      <td><input></td>
-      <td>${crearSelect(MARCAS)}</td>
-      <td><input></td>
-      <td>${crearSelect(DESCRIPCIONES)}</td>
-      <td><input></td>
-      <td>${crearSelect(SERVICIOS)}</td>
-      <td><input></td>
-    </tr>
-  `;
+  const n = tbody.rows.length + 1;
 
-  tbodyAcc.innerHTML += `
-    <tr>
-      <td>${n}</td>
-      <td><input></td>
-      <td><input></td>
-    </tr>
-  `;
-}
+  // ===== TABLA EQUIPOS =====
+  const row = tbody.insertRow();
 
+  row.insertCell().textContent = n;
+  row.insertCell().innerHTML = `<input>`;
+  row.insertCell().innerHTML = crearSelect(MARCAS);
+  row.insertCell().innerHTML = `<input>`;
+  row.insertCell().innerHTML = crearSelect(DESCRIPCIONES);
+  row.insertCell().innerHTML = `<input>`;
+  row.insertCell().innerHTML = crearSelect(SERVICIOS);
+  row.insertCell().innerHTML = `<input>`;
+
+  // ===== TABLA ACCESORIOS =====
+  const rowAcc = tbodyAcc.insertRow();
+
+  rowAcc.insertCell().textContent = n;
+  rowAcc.insertCell().innerHTML = `<input>`;
+  rowAcc.insertCell().innerHTML = `<input>`;
+};
 
 window.quitarEquipo = () => {
   const tbody = document.querySelector("#tablaEquipos tbody");
@@ -360,30 +399,23 @@ window.limpiar = (id) => {
   c.getContext("2d").clearRect(0, 0, c.width, c.height);
 };
 
-async function subirFirma(id) {
+async function subirFirma(id, nroFormato) {
   const canvas = document.getElementById(id);
-  if (!canvas) {
-    alert("No existe canvas: " + id);
-    return null;
-  }
+  if (!canvas) return null;
 
-  // ❌ No subir si está vacío
   if (canvasVacio(id)) return null;
 
   const blob = await new Promise(resolve => canvas.toBlob(resolve));
 
-  const formData = new FormData();
-  formData.append("file", blob);
-  formData.append("upload_preset", "first upload");
+  const nombre = `firmas/${nroFormato}_${id}.png`;
 
-  const res = await fetch("https://api.cloudinary.com/v1_1/drpmlng1d/image/upload", {
-    method: "POST",
-    body: formData
-  });
+  const storageRef = ref(storage, nombre);
 
-  const data = await res.json();
-  return data.secure_url;
+  await uploadBytes(storageRef, blob, { contentType: "image/png" });
+
+  return `${nroFormato}_${id}.png`;
 }
+
 
 // ===== DRAG MODAL =====
 const modalBox = document.getElementById("modalBox");
@@ -408,19 +440,13 @@ document.addEventListener("mousemove", (e) => {
 
 // ====== EDITAR
 window.editar = async (id) => {
+  mostrarLoading("Cargando registro...");
   editandoID = id;
 
-  const docRef = doc(db, "registros", id);
-  const snap = await getDoc(docRef);
+  const result = await obtenerRegistroConFirmas({ docId: id });
+  const d = result.data;
 
-  if (!snap.exists()) {
-    alert("Registro no encontrado");
-    return;
-  }
-
-  const d = snap.data();
-
-  abrirFormulario();
+  abrirFormulario(id);
 
   // Datos cliente
   document.getElementById("cliente").value = d.cliente || "";
@@ -432,12 +458,13 @@ window.editar = async (id) => {
   document.getElementById("guia").value = d.guia || "";
 
   // Cargar firmas en canvas
-  cargarFirma(d.firma_tecnico, "firmaTec");
-  cargarFirma(d.firma_cliente, "firmaCli");
+  cargarFirma(d.firmaTecnicoBase64, "firmaTec");
+  cargarFirma(d.firmaClienteBase64, "firmaCli");
 
   cargarEquipos(d.equipos);
 
   alert("Modo edición activado");
+  ocultarLoading();
 };
 
 function canvasVacio(id) {
@@ -462,6 +489,10 @@ function cargarFirma(url, canvasID) {
     const ctx = canvas.getContext("2d");
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  };
+
+  img.onerror = () => {
+    console.error("No se pudo cargar firma:", url);
   };
 }
 
@@ -498,7 +529,6 @@ function cargarEquipos(equipos) {
   });
 }
 
-
 function prepararCanvas(id) {
   const canvas = document.getElementById(id);
   const ctx = canvas.getContext("2d");
@@ -516,109 +546,102 @@ function prepararCanvas(id) {
 }
 
 document.getElementById("search").addEventListener("input", e => {
-  const texto = e.target.value.toLowerCase();
-
-  const filtrados = registrosGlobales.filter(d => {
-    const equipos = d.equipos || [];
-    const marcas = equipos.map(e => e.marca).join(" ").toLowerCase();
-    const modelos = equipos.map(e => e.modelo).join(" ").toLowerCase();
-
-    const fechaTxt = d.fecha?.seconds
-      ? new Date(d.fecha.seconds * 1000).toLocaleString().toLowerCase()
-      : "";
-
-    return (
-      ("" + (1000 + d.nro_formato)).includes(texto) ||
-      (d.cliente || "").toLowerCase().includes(texto) ||
-      (d.correo || "").toLowerCase().includes(texto) ||
-      (d.ruc || "").toLowerCase().includes(texto) ||
-      (d.telefono || "").toLowerCase().includes(texto) ||
-      (d.guia || "").toLowerCase().includes(texto) ||
-      (d.responsable || "").toLowerCase().includes(texto) ||
-      fechaTxt.includes(texto) ||
-      marcas.includes(texto) ||
-      modelos.includes(texto)
-    );
-  });
-
-  renderTabla(filtrados.slice(0, 30)); // mostrar solo 30 resultados
+  clearTimeout(timeout);
+  timeout = setTimeout(() => {
+    buscar(e.target.value);
+  }, 400);
 });
 
 
-async function cargarTodosRegistros() {
-  const q = await getDocs(collection(db, "registros"));
-  registrosGlobales = [];
 
-  q.forEach(docu => {
-    registrosGlobales.push({ id: docu.id, ...docu.data() });
-  });
-
-  console.log("Registros globales cargados:", registrosGlobales.length);
-}
-
-
-window.enviarPDF = async (docId) => {
-  try{
-    mostrarLoading("Enviando a PDF al correo...");
-    const docu = await getDoc(doc(db, "registros", docId));
-    const d = docu.data();
-    const fecha = new Date(d.fecha.seconds * 1000).toLocaleString();
-
-    // ===== TABLA EQUIPOS =====
-    const equipos = d.equipos || [];
-
-    // EQUIPOS TABLA HTML
-    const equiposHTML = equipos.map((e,i)=>`
-    <tr>
-    <td>${i+1}</td>
-    <td>${e.cant}</td>
-    <td style="word-break:break-word;">${e.marca}</td>
-    <td style="word-break:break-word;">${e.modelo}</td>
-    <td style="word-break:break-word;">${e.descripcion}</td>
-    <td style="word-break:break-word;">${e.serie}</td>
-    <td style="word-break:break-word;">${e.servicio}</td>
-    <td style="word-break:break-word;">${e.falla}</td>
-    </tr>
-    `).join("");
-
-    // ACCESORIOS
-    const accesoriosHTML = equipos.map((e,i)=>`
-    <tr>
-      <td>${i+1}</td>
-      <td style="word-break:break-word;">${e.accesorio || ""}</td>
-      <td style="word-break:break-word;">${e.obs || ""}</td>
-    </tr>
-    `).join("");
-
-    // FIRMAS
-    const firmaTec = d.firma_tecnico || "";
-    const firmaCli = d.firma_cliente || "";
-
-    const nro = 1000 + d.nro_formato;
-
-    const params = {
-      to_email: d.correo,
-      nro: nro,
-      fecha: fecha,
-      cliente: d.cliente,
-      ruc: d.ruc,
-      direccion: d.direccion,
-      telefono: d.telefono,
-      correo: d.correo,
-      responsable: d.responsable,
-      guia: d.guia,
-      equipos: equiposHTML,
-      accesorios: accesoriosHTML,
-      firma_tecnico: firmaTec,
-      firma_cliente: firmaCli
-    };
-
-    await emailjs.send("service_7kuljkq", "template_01npkp8", params); 
-    ocultarLoading();
-    alert("✅ Correo enviado");
-  }catch (err) {
-    ocultarLoading();
-    console.error(err);
-    alert("❌ Error al enviar PDF");
+window.buscar = async (texto) => {
+  texto = texto.toLowerCase().trim();
+  if (!texto) {
+    cargarClientes(); // volver a últimos
+    return;
   }
+
+  mostrarLoading("Buscando...");
+
+  try {
+    let resultados = [];
+    // ===== BUSCAR POR NUMERO =====
+    if (!isNaN(texto)) {
+
+      const nro = parseInt(texto) - 1000;
+
+      const qNro = query(
+        collection(db, "registros"),
+        where("nro_formato", "==", nro),
+        limit(20)
+      );
+
+      const snap = await getDocs(qNro);
+      snap.forEach(d => resultados.push({ id: d.id, ...d.data() }));
+
+    } else {
+
+      const campos = ["telefono",
+        "cliente_lower",
+        "correo_lower",
+        "responsable_lower",
+        "guia_lower"
+      ];
+      for (const campo of campos) {
+        const qCampo = query(
+          collection(db, "registros"),
+          orderBy(campo),
+          startAt(texto),
+          endAt(texto + "\uf8ff"),
+          limit(LIMITE)
+        );
+        const snap = await getDocs(qCampo);
+        snap.forEach(d => {
+          resultados.push({ id: d.id, ...d.data() });
+        });
+      }
+    }
+    
+    // ===== eliminar duplicados =====
+    const mapa = new Map();
+    resultados.forEach(r => mapa.set(r.id, r));
+
+    renderTabla(Array.from(mapa.values()));
+
+  } catch (err) {
+    console.error(err);
+    alert("Error en búsqueda");
+  }
+
+  ocultarLoading();
+};
+
+
+window.abrirMenuCorreo = (docId, correoRegistro) => {
+  docSeleccionado = docId;
+  correoRegistroActual = correoRegistro;
+
+  document.getElementById("correoSelect").value = "";
+  document.getElementById("modalCorreo").style.display = "flex";
+};
+
+window.cerrarMenuCorreo = () => {
+  document.getElementById("modalCorreo").style.display = "none";
+};
+
+window.confirmarEnvio = () => {
+  const val = document.getElementById("correoSelect").value;
+
+  let correoFinal = val === "registro"
+    ? correoRegistroActual
+    : val;
+
+  if (!correoFinal) {
+    alert("Seleccione un correo");
+    return;
+  }
+
+  cerrarMenuCorreo();
+
+  exportarPDF(docSeleccionado, correoFinal);
 };

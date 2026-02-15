@@ -1,8 +1,12 @@
-import { db } from "./firebase.js";
-import {doc, getDoc, getDocs, collection } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+import { db, functions } from "./firebase.js";
+import { getDocs, collection } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 import {ocultarLoading, mostrarLoading} from "./extras.js";
+import { httpsCallable } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-functions.js";
 
-async function cargarImagen(url) {
+const obtenerRegistroConFirmas = httpsCallable(functions, "obtenerRegistroConFirmas");
+const enviarPDFBackend = httpsCallable(functions, "enviarReportePDF");
+
+async function cargarImagenGIT(url) {
   const res = await fetch(url);
   const blob = await res.blob();
 
@@ -13,18 +17,29 @@ async function cargarImagen(url) {
   });
 }
 
-window.exportarPDF = async (docId) => {
+function blobToBase64(blob){
+  return new Promise((resolve,reject)=>{
+    const reader = new FileReader();
+    reader.onloadend = ()=>resolve(reader.result.split(",")[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+window.exportarPDF = async (docId, to_send=null) => {
   try{
-    mostrarLoading("Exportando a PDF...");
-    const docu = await getDoc(doc(db, "registros", docId));
-    const d = docu.data();
+    if(to_send===null) mostrarLoading("Exportando a PDF...");
+    else mostrarLoading("Enviando PDF...");
+
+    const result = await obtenerRegistroConFirmas({ docId });
+    const d = result.data;
 
     const { jsPDF } = window.jspdf;
     const pdf = new jsPDF("p", "mm", "a4");
 
     // ===== LOGO IZQUIERDA =====
     let urlLogo = "https://raw.githubusercontent.com/DretcmU/RegistrosCabelab/b14272afab90b283aa9b311901c85650f399d31d/logo_cabelab.png";
-    const logo = await cargarImagen(urlLogo);
+    const logo = await cargarImagenGIT(urlLogo);
     pdf.addImage(logo, "PNG", 10, 5, 70, 22);
 
     // ===== EMPRESA DERECHA =====
@@ -48,7 +63,7 @@ window.exportarPDF = async (docId) => {
     pdf.setFontSize(9);
 
     let y = 45;
-    pdf.text(`Fecha: ${new Date(d.fecha.seconds * 1000).toLocaleString()}`, 10, y); y+=5;
+    pdf.text(`Fecha: ${new Date(d.fecha).toLocaleString()}`, 10, y); y+=5;
     pdf.text(`Cliente: ${d.cliente}`, 10, y); y+=5;
     pdf.text(`RUC/DNI: ${d.ruc}`, 10, y); y+=5;
     pdf.text(`Dirección: ${d.direccion}`, 10, y); y+=5;
@@ -143,15 +158,8 @@ window.exportarPDF = async (docId) => {
       y4 = 20;
     }
 
-    if (d.firma_tecnico) {
-      const imgTec = await cargarImagen(d.firma_tecnico);
-      pdf.addImage(imgTec, "PNG", 20, y4, 50, 20);
-    }
-
-    if (d.firma_cliente) {
-      const imgCli = await cargarImagen(d.firma_cliente);
-      pdf.addImage(imgCli, "PNG", 120, y4, 50, 20);
-    }
+    pdf.addImage(d.firmaTecnicoBase64, "PNG", 20, y4, 50, 20);
+    pdf.addImage(d.firmaClienteBase64, "PNG", 120, y4, 50, 20);
 
     // ===== LINEAS =====
     pdf.setLineWidth(0.5); // grosor línea
@@ -161,67 +169,97 @@ window.exportarPDF = async (docId) => {
     pdf.text("firma del encargado de recepción", 20, y4 + 25);
     pdf.text("Firma del cliente responsable", 120, y4 + 25);
 
-    // ===== GUARDAR =====
-    pdf.save(`Formato_${nro}.pdf`);
+    if(to_send===null){
+      // ===== GUARDAR =====
+      pdf.save(`Formato_${nro}.pdf`);
+    }else{
+      // ===== PDF → base64 =====
+      const blob = pdf.output("blob");
+
+      const base64 = await blobToBase64(blob);
+
+      // ===== Enviar =====
+      await enviarPDFBackend({
+        toEmail: to_send, // puedes cambiar por input
+        pdfBase64: base64
+      });
+      alert("✅ PDF enviado");      
+    }
 
     ocultarLoading();
   }catch (err) {
     ocultarLoading();
     console.error(err);
-    alert("❌ Error al generar el PDF");
+    alert("❌ Error al generar/enviar el PDF");
   }
 };
 
 
 window.exportarExcel = async () => {
-  try {
-    mostrarLoading("Exportando a Excel...");
 
-    const querySnapshot = await getDocs(collection(db, "registros"));
-    const data = [];
+  const snapshot = await getDocs(collection(db, "registros"));
 
-    // Convertir docs a array para ordenar
-    const registros = [];
-    querySnapshot.forEach(docu => {
-      registros.push(docu.data());
+  let registros = [];
+
+  snapshot.forEach(docu => {
+    const d = docu.data();
+    registros.push(d);
+  });
+
+  // ===== ORDENAR POR ID =====
+  registros.sort((a, b) => (a.nro_formato || 0) - (b.nro_formato || 0));
+
+  const clientes = [];
+  const detalles = [];
+
+  registros.forEach(d => {
+
+    const idFormato = 1000 + (d.nro_formato || 0);
+
+    const fecha = d.fecha?.seconds
+      ? new Date(d.fecha.seconds * 1000).toLocaleDateString()
+      : "";
+
+    // HOJA CLIENTES
+    clientes.push({
+      ID: idFormato,
+      Cliente: d.cliente || "",
+      Fecha: fecha,
+      RUC: d.ruc || "",
+      Correo: d.correo || "",
+      Telefono: d.telefono || "",
+      Direccion: d.direccion || "",
+      Guia: d.guia || "",
+      Responsable: d.responsable || ""
     });
 
-    // Ordenar por nro_formato
-    registros.sort((a, b) => a.nro_formato - b.nro_formato);
-
-    registros.forEach(d => {
-      // Equipos en texto
-      let equiposTxt = "";
-      if (d.equipos) {
-        d.equipos.forEach((e, i) => {
-          equiposTxt += `${i+1}) ${e.marca} ${e.modelo} ${e.serie} - ${e.servicio}\n`;
-        });
-      }
-
-      data.push({
-        NRO: 1000 + d.nro_formato, // 👈 SUMAR 1000
-        Cliente: d.cliente,
-        RUC: d.ruc,
-        Dirección: d.direccion,
-        Correo: d.correo,
-        Responsable: d.responsable,
-        Teléfono: d.telefono,
-        Guía: d.guia,
-        Fecha: d.fecha?.toDate ? d.fecha.toDate().toLocaleString() : d.fecha,
-        Equipos: equiposTxt
+    // HOJA EQUIPOS
+    (d.equipos || []).forEach((e, i) => {
+      detalles.push({
+        ID: idFormato,
+        Item: i + 1,
+        Cant: e.cant || "",
+        Marca: e.marca || "",
+        Modelo: e.modelo || "",
+        Descripcion: e.descripcion || "",
+        Serie: e.serie || "",
+        Servicio: e.servicio || "",
+        Falla: e.falla || "",
+        Accesorios: e.accesorio || "",
+        Observaciones: e.obs || ""
       });
     });
 
-    const ws = XLSX.utils.json_to_sheet(data);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Registros");
+  });
 
-    XLSX.writeFile(wb, "CABELAB_Registros.xlsx");
-    ocultarLoading();
+  // Crear Excel
+  const wb = XLSX.utils.book_new();
 
-  } catch (err) {
-    ocultarLoading();
-    console.error(err);
-    alert("Hubo un error al exportar el Excel.");
-  }
+  const wsClientes = XLSX.utils.json_to_sheet(clientes);
+  const wsDetalles = XLSX.utils.json_to_sheet(detalles);
+
+  XLSX.utils.book_append_sheet(wb, wsClientes, "Clientes");
+  XLSX.utils.book_append_sheet(wb, wsDetalles, "Equipos");
+
+  XLSX.writeFile(wb, "registros.xlsx");
 };
