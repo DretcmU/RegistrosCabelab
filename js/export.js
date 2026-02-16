@@ -252,7 +252,6 @@ window.exportarExcel = async () => {
 
   });
 
-  // Crear Excel
   const wb = XLSX.utils.book_new();
 
   const wsClientes = XLSX.utils.json_to_sheet(clientes);
