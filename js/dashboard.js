@@ -11,9 +11,6 @@ import { httpsCallable } from "https://www.gstatic.com/firebasejs/10.7.1/firebas
 const obtenerRegistroConFirmas = httpsCallable(functions, "obtenerRegistroConFirmas");
 
 let editandoID = null;
-let registrosCache = []; // para el buscador
-let ultimoDoc = null;
-let primerDoc = null;
 const LIMITE = 3;
 let docSeleccionado = null;
 let correoRegistroActual = null;
@@ -59,7 +56,8 @@ window.cerrarSesion = async () => {
 };
 
 
-async function cargarClientes() {
+window.cargarClientes = async () => {
+  document.getElementById("search").value = "";
   const q = query(
     collection(db, "registros"),
     orderBy("nro_formato", "desc"),
@@ -95,53 +93,6 @@ window.cargarMas = async () => {
 }
 
 
-function procesarPagina(snap) {
-  registrosCache = [];
-
-  snap.docs.forEach(docu => {
-    registrosCache.push({ id: docu.id, ...docu.data() });
-  });
-
-  if (!snap.empty) {
-    primerDoc = snap.docs[0];
-    ultimoDoc = snap.docs[snap.docs.length - 1];
-  }
-
-  renderTabla(registrosCache);
-}
-
-
-window.nextPagina = async () => {
-  if (!ultimoDoc) return alert("No hay más registros");
-
-  const q = query(
-    collection(db, "registros"),
-    orderBy("nro_formato", "desc"),
-    startAfter(ultimoDoc),
-    limit(LIMITE)
-  );
-
-  const snap = await getDocs(q);
-  procesarPagina(snap);
-};
-
-window.prevPagina = async () => {
-  if (!primerDoc) return alert("No hay anteriores");
-
-  const q = query(
-    collection(db, "registros"),
-    orderBy("nro_formato", "asc"),
-    startAfter(primerDoc),
-    limit(LIMITE)
-  );
-
-  const snap = await getDocs(q);
-
-  const docs = snap.docs.reverse(); // invertir orden
-
-  procesarPagina({ docs, empty: docs.length == 0 });
-};
-
 function renderTabla(lista, add=null) {
   const tabla = document.querySelector("#tabla tbody");
   if(add===null)
@@ -157,7 +108,7 @@ function renderTabla(lista, add=null) {
 
     tabla.innerHTML += `
       <tr>
-        <td>${1000 + d.nro_formato}</td>
+        <td>${d.nro_search}</td>
         <td>${d.cliente || ""}</td>
         <td>${d.ruc || ""}</td>
         <td>${d.correo || ""}</td>
@@ -251,6 +202,7 @@ window.guardarCliente = async () => {
       }
 
       datos.nro_formato = nro;
+      datos.nro_search = (1000 + nro).toString();
 
       await addDoc(collection(db, "registros"), datos);
       alert("✅ Registro guardado");
@@ -565,41 +517,25 @@ window.buscar = async (texto) => {
 
   try {
     let resultados = [];
-    // ===== BUSCAR POR NUMERO =====
-    if (!isNaN(texto)) {
 
-      const nro = parseInt(texto) - 1000;
-
-      const qNro = query(
+    const campos = ["telefono", "nro_search",
+      "cliente_lower",
+      "correo_lower",
+      "responsable_lower",
+      "guia_lower"
+    ];
+    for (const campo of campos) {
+      const qCampo = query(
         collection(db, "registros"),
-        where("nro_formato", "==", nro),
-        limit(20)
+        orderBy(campo),
+        startAt(texto),
+        endAt(texto + "\uf8ff"),
+        limit(LIMITE)
       );
-
-      const snap = await getDocs(qNro);
-      snap.forEach(d => resultados.push({ id: d.id, ...d.data() }));
-
-    } else {
-
-      const campos = ["telefono",
-        "cliente_lower",
-        "correo_lower",
-        "responsable_lower",
-        "guia_lower"
-      ];
-      for (const campo of campos) {
-        const qCampo = query(
-          collection(db, "registros"),
-          orderBy(campo),
-          startAt(texto),
-          endAt(texto + "\uf8ff"),
-          limit(LIMITE)
-        );
-        const snap = await getDocs(qCampo);
-        snap.forEach(d => {
-          resultados.push({ id: d.id, ...d.data() });
-        });
-      }
+      const snap = await getDocs(qCampo);
+      snap.forEach(d => {
+        resultados.push({ id: d.id, ...d.data() });
+      });
     }
     
     // ===== eliminar duplicados =====
