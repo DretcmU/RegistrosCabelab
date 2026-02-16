@@ -11,7 +11,7 @@ import { httpsCallable } from "https://www.gstatic.com/firebasejs/10.7.1/firebas
 const obtenerRegistroConFirmas = httpsCallable(functions, "obtenerRegistroConFirmas");
 
 let editandoID = null;
-const LIMITE = 3;
+const LIMITE = 10;
 let docSeleccionado = null;
 let correoRegistroActual = null;
 let lastDoc = null;
