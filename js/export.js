@@ -196,80 +196,69 @@ window.exportarPDF = async (docId, to_send=null) => {
 
 
 window.exportarExcel = async () => {
-  mostrarLoading("Exportando todo a Exce...");
 
-  try{
-    const snapshot = await getDocs(collection(db, "registros"));
+  const snapshot = await getDocs(collection(db, "registros"));
 
-    let registros = [];
+  let registros = [];
 
-    snapshot.forEach(docu => {
-      const d = docu.data();
-      registros.push(d);
+  snapshot.forEach(docu => {
+    const d = docu.data();
+    registros.push(d);
+  });
+
+  // ===== ORDENAR POR ID =====
+  registros.sort((a, b) => (a.nro_formato || 0) - (b.nro_formato || 0));
+
+  const clientes = [];
+  const detalles = [];
+
+  registros.forEach(d => {
+
+    const idFormato = 1000 + (d.nro_formato || 0);
+
+    const fecha = d.fecha?.seconds
+      ? new Date(d.fecha.seconds * 1000).toLocaleDateString()
+      : "";
+
+    // HOJA CLIENTES
+    clientes.push({
+      ID: idFormato,
+      Cliente: d.cliente || "",
+      Fecha: fecha,
+      RUC: d.ruc || "",
+      Correo: d.correo || "",
+      Telefono: d.telefono || "",
+      Direccion: d.direccion || "",
+      Guia: d.guia || "",
+      Responsable: d.responsable || ""
     });
 
-    // ===== ORDENAR POR ID =====
-    registros.sort((a, b) => (a.nro_formato || 0) - (b.nro_formato || 0));
-
-    const clientes = [];
-    const detalles = [];
-
-    registros.forEach(d => {
-
-      const idFormato = 1000 + (d.nro_formato || 0);
-
-      const fecha = d.fecha?.seconds
-        ? new Date(d.fecha.seconds * 1000).toLocaleDateString()
-        : "";
-
-      // HOJA CLIENTES
-      clientes.push({
+    // HOJA EQUIPOS
+    (d.equipos || []).forEach((e, i) => {
+      detalles.push({
         ID: idFormato,
-        Cliente: d.cliente || "",
-        Fecha: fecha,
-        RUC: d.ruc || "",
-        Correo: d.correo || "",
-        Telefono: d.telefono || "",
-        Direccion: d.direccion || "",
-        Guia: d.guia || "",
-        Responsable: d.responsable || ""
+        Item: i + 1,
+        Cant: e.cant || "",
+        Marca: e.marca || "",
+        Modelo: e.modelo || "",
+        Descripcion: e.descripcion || "",
+        Serie: e.serie || "",
+        Servicio: e.servicio || "",
+        Falla: e.falla || "",
+        Accesorios: e.accesorio || "",
+        Observaciones: e.obs || ""
       });
-
-      // HOJA EQUIPOS
-      (d.equipos || []).forEach((e, i) => {
-        detalles.push({
-          ID: idFormato,
-          Item: i + 1,
-          Cant: e.cant || "",
-          Marca: e.marca || "",
-          Modelo: e.modelo || "",
-          Descripcion: e.descripcion || "",
-          Serie: e.serie || "",
-          Servicio: e.servicio || "",
-          Falla: e.falla || "",
-          Accesorios: e.accesorio || "",
-          Observaciones: e.obs || ""
-        });
-      });
-
     });
 
-    // Crear Excel
-    const wb = XLSX.utils.book_new();
+  });
 
-    const wsClientes = XLSX.utils.json_to_sheet(clientes);
-    const wsDetalles = XLSX.utils.json_to_sheet(detalles);
+  const wb = XLSX.utils.book_new();
 
-    XLSX.utils.book_append_sheet(wb, wsClientes, "Clientes");
-    XLSX.utils.book_append_sheet(wb, wsDetalles, "Equipos");
+  const wsClientes = XLSX.utils.json_to_sheet(clientes);
+  const wsDetalles = XLSX.utils.json_to_sheet(detalles);
 
-    XLSX.writeFile(wb, "registros.xlsx");
-    ocultarLoading();
-    alert("✅ Excel generado"); 
-  }catch (err) {
-    ocultarLoading();
-    console.error(err);
-    alert("❌ Error al generar el Excel.");
-  }
+  XLSX.utils.book_append_sheet(wb, wsClientes, "Clientes");
+  XLSX.utils.book_append_sheet(wb, wsDetalles, "Equipos");
 
+  XLSX.writeFile(wb, "registros.xlsx");
 };
