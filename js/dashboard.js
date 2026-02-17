@@ -9,6 +9,7 @@ import { ref, uploadBytes } from "https://www.gstatic.com/firebasejs/10.7.1/fire
 import { httpsCallable } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-functions.js";
 
 const obtenerRegistroConFirmas = httpsCallable(functions, "obtenerRegistroConFirmas");
+const guardarRegistro = httpsCallable(functions, "guardarRegistro");
 
 let editandoID = null;
 const LIMITE = 10;
@@ -17,27 +18,6 @@ let correoRegistroActual = null;
 let lastDoc = null;
 let timeout = null;
 
-async function obtenerNumeroFormato() {
-  const contadorRef = doc(db, "config", "contador");
-
-  const nro = await runTransaction(db, async (transaction) => {
-    const snap = await transaction.get(contadorRef);
-
-    let nuevo;
-
-    if (!snap.exists()) {
-      nuevo = 1;
-      transaction.set(contadorRef, { nro: nuevo });
-    } else {
-      nuevo = snap.data().nro + 1;
-      transaction.update(contadorRef, { nro: nuevo });
-    }
-
-    return nuevo;
-  });
-
-  return nro;
-}
 
 onAuthStateChanged(auth, async (user) => {
   if (!user) {
@@ -116,7 +96,7 @@ function renderTabla(lista, add=null) {
         <td>${modelos}</td>
         <td>${fecha}</td>
         <td><button onclick="editar('${d.id}')">✏️</button></td>
-        <td><button onclick="exportarPDF('${d.id}')">📄</button></td>
+        <td><button onclick="exportarPDF('${d.id}')">📥</button></td>
         <td><button onclick="abrirMenuCorreo('${d.id}', '${d.correo}')">✉️</button></td>
       </tr>
     `;
@@ -143,9 +123,62 @@ window.cerrarFormulario = () => {
   document.getElementById("modal").style.display = "none";
 };
 
+
+function validarFormulario() {
+
+  const campos = [
+    { id: "cliente", nombre: "Cliente" },
+    { id: "ruc", nombre: "RUC" },
+    { id: "direccion", nombre: "Dirección" },
+    { id: "correo", nombre: "Correo" },
+    { id: "responsable", nombre: "Responsable" },
+    { id: "telefono", nombre: "Teléfono" },
+    { id: "guia", nombre: "Guía" }
+  ];
+
+  for (const c of campos) {
+    const val = document.getElementById(c.id).value.trim();
+    if (!val) {
+      alert(`⚠️ Falta completar: ${c.nombre}`);
+      document.getElementById(c.id).focus();
+      return false;
+    }
+  }
+
+  // validar equipos
+  const equipos = obtenerEquipos();
+
+  if (equipos.length === 0) {
+    alert("⚠️ Debe agregar al menos un equipo");
+    return false;
+  }
+
+  for (let i = 0; i < equipos.length; i++) {
+    const e = equipos[i];
+
+    if (!e.cant || !e.marca || !e.modelo || !e.descripcion || !e.serie || !e.servicio) {
+      alert(`⚠️ Equipo ${i+1} incompleto`);
+      return false;
+    }
+  }
+
+  return true;
+}
+
+async function firmaBase64(id) {
+  const canvas = document.getElementById(id);
+  if (!canvas || canvasVacio(id)) return null;
+  return canvas.toDataURL("image/png");
+}
+
 window.guardarCliente = async () => {
   try {
     mostrarLoading("Guardando registro...");
+
+    if (!validarFormulario()) {
+      ocultarLoading();
+      return;
+    }
 
     const cliente = document.getElementById("cliente").value;
     const ruc = document.getElementById("ruc").value;
@@ -155,70 +188,48 @@ window.guardarCliente = async () => {
     const telefono = document.getElementById("telefono").value;
     const guia = document.getElementById("guia").value;
 
-        // ===== CAMPOS LOWER =====
-    const cliente_lower = cliente.toLowerCase();
-    const correo_lower = correo.toLowerCase();
-    const responsable_lower = responsable.toLowerCase();
-    const guia_lower = guia.toLowerCase();
-
-    const tempID = Date.now(); // ID temporal para nombres
-
     const datos = {
-      cliente, ruc, direccion, correo, telefono,
-      responsable, guia,
+      docId: editandoID || null,
+
+      cliente: cliente,
+      ruc: ruc,
+      direccion: direccion,
+      correo: correo,
+      telefono: telefono,
+      responsable: responsable,
+      guia: guia,
       equipos: obtenerEquipos(),
-      fecha: new Date(), cliente_lower,
-      correo_lower,
-      responsable_lower,
-      guia_lower,
+
+      cliente_lower: cliente.toLowerCase(),
+      correo_lower: correo.toLowerCase(),
+      responsable_lower: responsable.toLowerCase(),
+      guia_lower: guia.toLowerCase(),
+
+      firmaTec: await firmaBase64("firmaTec"),
+      firmaCli: await firmaBase64("firmaCli")
     };
 
-    // ================== EDITAR ==================
-    if (editandoID) {
-      const oldSnap = await getDoc(doc(db, "registros", editandoID));
-      const old = oldSnap.data();
-
-      const nro = old.nro_formato;
-
-      await subirFirma("firmaTec", nro);
-      await subirFirma("firmaCli", nro);
-
-      await updateDoc(doc(db, "registros", editandoID), datos);
-
-      alert("✏️ Registro actualizado");
+    if (!datos.firmaTec || !datos.firmaCli) {
+      alert("Debe firmar técnico y cliente");
+      ocultarLoading();
+      return;
     }
 
-    // ================== NUEVO ==================
-    else {
-      const nro = await obtenerNumeroFormato();
+    const res = await guardarRegistro(datos);
 
-      const firmaTecnicoURL = await subirFirma("firmaTec", nro);
-      const firmaClienteURL = await subirFirma("firmaCli", nro);
+    alert(`✅ Guardado — Nº ${res.data.nroVisible}`);
 
-      if (!firmaTecnicoURL || !firmaClienteURL) {
-        alert("Debe firmar técnico y cliente");
-        ocultarLoading();
-        return;
-      }
-
-      datos.nro_formato = nro;
-      datos.nro_search = (1000 + nro).toString();
-
-      await addDoc(collection(db, "registros"), datos);
-      alert("✅ Registro guardado");
-    }
-
-    ocultarLoading();
-    editandoID = null;
     cerrarFormulario();
     cargarClientes();
 
   } catch (err) {
-    ocultarLoading();
     console.error(err);
-    alert("❌ Error al guardar");
+    alert("Error al guardar");
   }
+
+  ocultarLoading();
 };
+
 
 window.agregarEquipo = () => {
   const tbody = document.querySelector("#tablaEquipos tbody");
@@ -350,23 +361,6 @@ window.limpiar = (id) => {
   const c = document.getElementById(id);
   c.getContext("2d").clearRect(0, 0, c.width, c.height);
 };
-
-async function subirFirma(id, nroFormato) {
-  const canvas = document.getElementById(id);
-  if (!canvas) return null;
-
-  if (canvasVacio(id)) return null;
-
-  const blob = await new Promise(resolve => canvas.toBlob(resolve));
-
-  const nombre = `firmas/${nroFormato}_${id}.png`;
-
-  const storageRef = ref(storage, nombre);
-
-  await uploadBytes(storageRef, blob, { contentType: "image/png" });
-
-  return `${nroFormato}_${id}.png`;
-}
 
 
 // ===== DRAG MODAL =====
@@ -579,5 +573,5 @@ window.confirmarEnvio = () => {
 
   cerrarMenuCorreo();
 
-  exportarPDF(docSeleccionado, correoFinal);
+  sendPDF(docSeleccionado, correoFinal);
 };
