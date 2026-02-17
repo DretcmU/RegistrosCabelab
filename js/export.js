@@ -17,19 +17,25 @@ async function cargarImagenGIT(url) {
   });
 }
 
-function blobToBase64(blob){
-  return new Promise((resolve,reject)=>{
-    const reader = new FileReader();
-    reader.onloadend = ()=>resolve(reader.result.split(",")[1]);
-    reader.onerror = reject;
-    reader.readAsDataURL(blob);
-  });
+
+window.sendPDF = async (docId, toEmail) => {
+  mostrarLoading("Enviando PDF...");
+  try{
+    await enviarPDFBackend({docId, toEmail});
+      alert("✅ PDF enviado");      
+
+  }catch (err) {
+    
+    console.error(err);
+    alert("❌ Error al enviar el PDF");
+  }
+  
+  ocultarLoading();
 }
 
-window.exportarPDF = async (docId, to_send=null) => {
+window.exportarPDF = async (docId) => {
   try{
-    if(to_send===null) mostrarLoading("Exportando a PDF...");
-    else mostrarLoading("Enviando PDF...");
+    mostrarLoading("Exportando a PDF...");
 
     const result = await obtenerRegistroConFirmas({ docId });
     const d = result.data;
@@ -63,7 +69,12 @@ window.exportarPDF = async (docId, to_send=null) => {
     pdf.setFontSize(9);
 
     let y = 45;
-    pdf.text(`Fecha: ${new Date(d.fecha).toLocaleString()}`, 10, y); y+=5;
+    const fechaObj = new Date(d.fecha);
+    const diaMesAnio = fechaObj.toLocaleDateString(); // Formato local: dd/mm/yyyy
+    const horaMin = fechaObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); // Formato: hh:mm
+
+    pdf.text(`Fecha: ${diaMesAnio}, Hora: ${horaMin}`, 10, y); y+=5;
+    //pdf.text(`Fecha: ${new Date(d.fecha).toLocaleString()}`, 10, y); y+=5;
     pdf.text(`Cliente: ${d.cliente}`, 10, y); y+=5;
     pdf.text(`RUC/DNI: ${d.ruc}`, 10, y); y+=5;
     pdf.text(`Dirección: ${d.direccion}`, 10, y); y+=5;
@@ -72,6 +83,10 @@ window.exportarPDF = async (docId, to_send=null) => {
     pdf.text(`Teléfono: ${d.telefono}`, 10, y); y+=5;
     pdf.text(`Guía Remisión: ${d.guia}`, 10, y); y+=10;
 
+    pdf.setFontSize(10);
+    pdf.setFont("helvetica", "bold");
+    pdf.text("Equipos:", 10, y);
+    y = y + 5;
     // ===== TABLA EQUIPOS =====
     const equipos = d.equipos || [];
     const equiposData = equipos.map((e,i)=>[
@@ -100,19 +115,24 @@ window.exportarPDF = async (docId, to_send=null) => {
       },
 
       columnStyles: {
-        0: { cellWidth: 8 },   // Item
+        0: { cellWidth: 10 },   // Item
         1: { cellWidth: 10 },  // Cant
         2: { cellWidth: 25 },  // Marca
         3: { cellWidth: 30 },  // Modelo
         4: { cellWidth: 40 },  // Descripción
         5: { cellWidth: 25 },  // Serie
         6: { cellWidth: 20 },  // Servicio
-        7: { cellWidth: 30 }   // Falla
+        7: { cellWidth: 20 }   // Falla
       }
     });
 
     // ===== TABLA ACCESORIOS =====
-    const y2 = pdf.lastAutoTable.finalY + 10;
+    let y2 = pdf.lastAutoTable.finalY + 10;
+    pdf.setFontSize(10);
+    pdf.setFont("helvetica", "bold");
+    pdf.text("Accesorios:", 10, y2);
+    y2 = y2 + 5;
+
     const accData = equipos.map((e,i)=>[
       i+1, e.accesorio || "", e.obs || ""
     ]);
@@ -138,7 +158,7 @@ window.exportarPDF = async (docId, to_send=null) => {
 
       columnStyles: {
         0: { cellWidth: 10 },
-        1: { cellWidth: 60 },
+        1: { cellWidth: 70 },
         2: { cellWidth: 100 }
       }
     });
@@ -146,7 +166,7 @@ window.exportarPDF = async (docId, to_send=null) => {
     // ===== NOTA =====
     let y3 = pdf.lastAutoTable.finalY + 10;
     let nota = "NOTA: Transcurrido un año desde la fecha de recepción, la empresa no se hace responsable por deterioro o pérdida del equipo. Todo reclamo posterior queda sin efecto.";
-    let notaLines = pdf.splitTextToSize(nota, 180);
+    let notaLines = pdf.splitTextToSize(nota, 230);
     pdf.setFontSize(8);
     pdf.text(notaLines, 10, y3);
 
@@ -163,34 +183,20 @@ window.exportarPDF = async (docId, to_send=null) => {
 
     // ===== LINEAS =====
     pdf.setLineWidth(0.5); // grosor línea
-    pdf.line(20, y4 + 22, 70, y4 + 22);   // técnico
+    pdf.line(20, y4 + 22, 75, y4 + 22);   // técnico
     pdf.line(120, y4 + 22, 170, y4 + 22); // cliente
 
-    pdf.text("firma del encargado de recepción", 20, y4 + 25);
-    pdf.text("Firma del cliente responsable", 120, y4 + 25);
+    pdf.text("firma del encargado de recepción", 25, y4 + 25);
+    pdf.text("Firma del cliente responsable", 125, y4 + 25);
 
-    if(to_send===null){
-      // ===== GUARDAR =====
-      pdf.save(`Formato_${nro}.pdf`);
-    }else{
-      // ===== PDF → base64 =====
-      const blob = pdf.output("blob");
-
-      const base64 = await blobToBase64(blob);
-
-      // ===== Enviar =====
-      await enviarPDFBackend({
-        toEmail: to_send, // puedes cambiar por input
-        pdfBase64: base64
-      });
-      alert("✅ PDF enviado");      
-    }
+    // ===== GUARDAR =====
+    pdf.save(`Formato_${nro}.pdf`);
 
     ocultarLoading();
   }catch (err) {
     ocultarLoading();
     console.error(err);
-    alert("❌ Error al generar/enviar el PDF");
+    alert("❌ Error al generar el PDF");
   }
 };
 
